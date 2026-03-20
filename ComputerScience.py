@@ -9,7 +9,7 @@ st.caption("Powered by Claude")
 # ── API client ───────────────────────────────────────────────────────────────
 # Replace the string below with your actual Anthropic API key
 # Get one free at: https://console.anthropic.com
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 client = anthropic.Anthropic(api_key=API_KEY)
 
 # ── Sidebar settings ─────────────────────────────────────────────────────────
