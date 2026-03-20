@@ -1,12 +1,13 @@
 import streamlit as st
 import anthropic
+import base64
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="AI Chatbot", page_icon="🤖")
 st.title("🤖 AI Chatbot")
 st.caption("Powered by Claude")
 
-# ── API client (reads key from Streamlit Secrets) ─────────────────────────────
+# ── API client ────────────────────────────────────────────────────────────────
 try:
     API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 except Exception:
@@ -15,16 +16,16 @@ except Exception:
 
 client = anthropic.Anthropic(api_key=API_KEY)
 
-# ── Sidebar settings ─────────────────────────────────────────────────────────
+# ── Sidebar settings ──────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Settings")
 
+    # Persona selector
     persona = st.selectbox(
         "Chatbot Persona",
         ["General Assistant", "CS Tutor", "Creative Writer", "Joke Bot", "✏️ Custom"]
     )
 
-    # ── Custom persona creator ────────────────────────────────────────────────
     PERSONAS = {
         "General Assistant": "You are a helpful and friendly assistant.",
         "CS Tutor":          "You are a computer science tutor. Explain concepts clearly and simply, using analogies and short code examples where helpful.",
@@ -38,11 +39,37 @@ with st.sidebar:
             placeholder='e.g. "You are a pirate who only speaks in rhymes."',
             height=120,
         )
-        system_prompt = custom_prompt if custom_prompt.strip() else "You are a helpful assistant."
+        base_system_prompt = custom_prompt if custom_prompt.strip() else "You are a helpful assistant."
         if not custom_prompt.strip():
             st.caption("ℹ️ Using default prompt until you write one above.")
     else:
-        system_prompt = PERSONAS[persona]
+        base_system_prompt = PERSONAS[persona]
+
+    st.divider()
+
+    # ── Language selector ─────────────────────────────────────────────────────
+    st.subheader("🌍 Response Language")
+    language = st.selectbox(
+        "Reply in:",
+        ["English", "Spanish", "French", "German", "Italian",
+         "Portuguese", "Japanese", "Chinese", "Arabic", "Hindi"]
+    )
+
+    if language != "English":
+        system_prompt = base_system_prompt + f" Always respond in {language}, regardless of what language the user writes in."
+    else:
+        system_prompt = base_system_prompt
+
+    st.divider()
+
+    # ── Image upload ──────────────────────────────────────────────────────────
+    st.subheader("🖼️ Image Upload")
+    uploaded_image = st.file_uploader(
+        "Attach an image to your next message:",
+        type=["png", "jpg", "jpeg", "gif", "webp"],
+    )
+    if uploaded_image:
+        st.image(uploaded_image, caption="Image ready to send", use_container_width=True)
 
     st.divider()
 
@@ -50,22 +77,51 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# ── Session state for chat history ───────────────────────────────────────────
+# ── Session state ─────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # ── Display existing messages ─────────────────────────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        # If the message has image content, show only the text part in history
+        if isinstance(msg["content"], list):
+            for block in msg["content"]:
+                if block.get("type") == "text":
+                    st.markdown(block["text"])
+            st.caption("📎 Image was attached to this message")
+        else:
+            st.markdown(msg["content"])
 
-# ── Handle new user input ────────────────────────────────────────────────────
+# ── Handle new user input ─────────────────────────────────────────────────────
 if prompt := st.chat_input("Type a message..."):
 
-    # Add user message to history and display it
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Build message content (text + optional image)
+    if uploaded_image:
+        image_bytes = uploaded_image.read()
+        image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        media_type = uploaded_image.type  # e.g. "image/png"
+
+        message_content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": image_b64,
+                },
+            },
+            {"type": "text", "text": prompt},
+        ]
+    else:
+        message_content = prompt
+
+    # Display user message
+    st.session_state.messages.append({"role": "user", "content": message_content})
     with st.chat_message("user"):
         st.markdown(prompt)
+        if uploaded_image:
+            st.caption("📎 Image attached")
 
     # ── Streaming response ────────────────────────────────────────────────────
     with st.chat_message("assistant"):
@@ -81,9 +137,9 @@ if prompt := st.chat_input("Type a message..."):
             ) as stream:
                 for text_chunk in stream.text_stream:
                     full_reply += text_chunk
-                    response_placeholder.markdown(full_reply + "▌")  # blinking cursor effect
+                    response_placeholder.markdown(full_reply + "▌")
 
-            response_placeholder.markdown(full_reply)  # final response without cursor
+            response_placeholder.markdown(full_reply)
 
         except anthropic.AuthenticationError:
             full_reply = "⚠️ Invalid API key. Please check your Streamlit Secrets."
@@ -95,5 +151,4 @@ if prompt := st.chat_input("Type a message..."):
             full_reply = f"⚠️ Unexpected error: {e}"
             response_placeholder.markdown(full_reply)
 
-    # Add assistant reply to history
     st.session_state.messages.append({"role": "assistant", "content": full_reply})
